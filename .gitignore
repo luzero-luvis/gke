@@ -1,0 +1,43 @@
+.terraform/
+*.tfstate
+*.tfstate.*
+*.tfplan
+*.tfplan.*
+*.tfvars
+*.tfvars.json
+backend.hcl
+**/backend.hcl
+crash.log
+crash.*.log
+.terraformrc
+terraform.rc
+override.tf
+override.tf.json
+*_override.tf
+*_override.tf.json
+
+# Local credentials and environment configuration.
+.env
+.env.*
+!.env.example
+application_default_credentials.json
+service-account*.json
+*-credentials.json
+gha-creds-*.json
+*.pem
+*.key
+.kube/
+kubeconfig
+kubeconfig.*
+
+# Generated workloads and local Python environments.
+workloads/rendered/
+.venv/
+venv/
+__pycache__/
+*.pyc
+.DS_Store
+
+# Keep configuration examples and provider lock files in version control.
+!*.tfvars.example
+!*.tfvars.json.example

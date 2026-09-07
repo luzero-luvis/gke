@@ -1,0 +1,4 @@
+project_id          = "replace-with-admin-project"
+bucket_name         = "replace-with-globally-unique-state-bucket"
+location            = "ASIA"
+state_admin_members = ["group:platform@example.com"]

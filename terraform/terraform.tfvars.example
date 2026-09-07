@@ -1,0 +1,37 @@
+# Examples only: choose your project's actual regions, zones, CIDRs, and capacity.
+project_id   = "replace-with-project-id"
+cluster_name = "production-gke"
+environment  = "production"
+region       = "asia-south1"
+zones        = ["asia-south1-a", "asia-south1-b", "asia-south1-c"]
+backup_region = "asia-south2"
+network_cidr = "10.64.0.0/14"
+
+# 3 on-demand nodes minimum; up to 30 total plus 3 surge nodes.
+machine_type       = "e2-standard-4"
+max_nodes_per_zone = 10
+release_channel    = "REGULAR"
+
+# Supply real, existing channel resource names before production use.
+notification_channels = []
+# cluster_access_members = ["group:platform@example.com"]
+# authenticator_security_group = "gke-security-groups@example.com"
+
+# Enforce after CI can create verified attestations; default is audit-only.
+# binary_authorization_attestors = ["projects/your-project/attestors/release"]
+
+# public_app = {
+#   hostname         = "api.example.com"
+#   dns_managed_zone = "example-com"
+#   waf_preview      = true # set false after examining WAF logs under real traffic
+#   requests_per_minute_per_ip = 600
+# }
+
+# Existing secrets only. Fetch values through your app's Google SDK using ADC.
+# secret_access = {
+#   app_database = {
+#     secret_id       = "app-database-password"
+#     namespace       = "apps"
+#     service_account = "app"
+#   }
+# }

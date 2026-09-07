@@ -1,0 +1,2 @@
+bucket = "replace-with-globally-unique-state-bucket"
+prefix = "gke/production"

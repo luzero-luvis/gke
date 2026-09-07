@@ -1,0 +1,60 @@
+name: Validate GKE foundation
+
+on:
+  pull_request:
+  push:
+    branches: [main]
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+concurrency:
+  group: gke-validate-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  validate:
+    runs-on: ubuntu-24.04
+    timeout-minutes: 20
+    steps:
+      - uses: actions/checkout@11bd71901bbe5b1630ceea73d27597364c9af683
+        with:
+          persist-credentials: false
+      - uses: hashicorp/setup-terraform@b9cd54a3c349d3f38e8881555d616ced269862dd
+        with:
+          terraform_version: 1.16.0
+          terraform_wrapper: false
+      - name: Formatting
+        run: terraform fmt -check -recursive
+      - name: Validate state bootstrap
+        run: |
+          terraform -chdir=bootstrap init -backend=false -input=false -lockfile=readonly
+          terraform -chdir=bootstrap validate -no-color
+      - name: Validate infrastructure
+        run: |
+          terraform -chdir=terraform init -backend=false -input=false -lockfile=readonly
+          terraform -chdir=terraform validate -no-color
+      - name: Mocked plans and effective security settings
+        run: |
+          terraform -chdir=terraform test -json -verbose > /tmp/gke-tests.jsonl
+          python3 scripts/check-terraform-plan.py /tmp/gke-tests.jsonl
+      - name: Show Terraform failures
+        if: failure()
+        run: |
+          python3 - <<'PY'
+          import json
+          from pathlib import Path
+          path = Path('/tmp/gke-tests.jsonl')
+          if path.exists():
+              for line in path.read_text().splitlines():
+                  event = json.loads(line)
+                  if event['type'] in ['diagnostic', 'test_summary', 'test_run']:
+                      print(event.get('@message'))
+                      print(event.get('diagnostic', {}).get('detail', ''))
+          PY
+      - name: Workload tests
+        run: |
+          python3 -m venv /tmp/gke-tests-venv
+          /tmp/gke-tests-venv/bin/pip install -r requirements-dev.txt
+          /tmp/gke-tests-venv/bin/python -m unittest discover -s tests -v

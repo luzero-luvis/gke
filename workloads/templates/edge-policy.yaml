@@ -1,0 +1,54 @@
+apiVersion: networking.gke.io/v1
+kind: GCPBackendPolicy
+metadata:
+  name: app
+  namespace: apps
+spec:
+  default:
+    securityPolicy: "${SECURITY_POLICY}"
+    timeoutSec: 30
+    connectionDraining: {drainingTimeoutSec: 30}
+    logging: {enabled: true, sampleRate: 1000000}
+  targetRef: {group: "", kind: Service, name: app}
+---
+apiVersion: networking.gke.io/v1
+kind: HealthCheckPolicy
+metadata:
+  name: app
+  namespace: apps
+spec:
+  default:
+    checkIntervalSec: 10
+    timeoutSec: 5
+    healthyThreshold: 2
+    unhealthyThreshold: 3
+    config:
+      type: HTTP
+      httpHealthCheck: {portSpecification: USE_FIXED_PORT, port: 8080, requestPath: /readyz}
+  targetRef: {group: "", kind: Service, name: app}
+---
+apiVersion: networking.gke.io/v1
+kind: GCPGatewayPolicy
+metadata:
+  name: app
+  namespace: apps
+spec:
+  default:
+    sslPolicy: "${SSL_POLICY}"
+  targetRef: {group: gateway.networking.k8s.io, kind: Gateway, name: app}
+---
+apiVersion: networking.k8s.io/v1
+kind: NetworkPolicy
+metadata:
+  name: allow-google-load-balancer
+  namespace: apps
+spec:
+  podSelector:
+    matchLabels: {app.kubernetes.io/name: app}
+  policyTypes: [Ingress]
+  ingress:
+    - from:
+        - ipBlock: {cidr: 35.191.0.0/16}
+        - ipBlock: {cidr: 130.211.0.0/22}
+      ports:
+        - {protocol: TCP, port: 8080}
