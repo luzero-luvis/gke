@@ -2,6 +2,8 @@
 
 Terraform for a regional GKE Standard cluster, organized like the companion EKS project. The cluster module wraps [`terraform-google-modules/kubernetes-engine/google` v45.0.0](https://github.com/terraform-google-modules/terraform-google-kubernetes-engine/tree/v45.0.0). This repository contains infrastructure and workload templates; no Google Cloud resources have been deployed.
 
+Read the [Uber-inspired infrastructure architecture](docs/uber-inspired-architecture.md) for the complete platform design, load-balancer and API gateway diagrams, existing versus proposed components, and linked Uber engineering sources.
+
 ```text
 .
 ├── bootstrap/
