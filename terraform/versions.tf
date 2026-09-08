@@ -1,12 +1,13 @@
 terraform {
   required_version = ">= 1.9.0, < 2.0.0"
 
-  backend "gcs" {}
+  # TEMP: local backend for pre-billing plan preview. Revert before real apply.
+  # backend "gcs" {}
 
   required_providers {
     google = {
       source  = "hashicorp/google"
-      version = ">= 7.17.0, < 8.0.0"
+      version = ">= 7.39.0, < 8.0.0"
     }
     google-beta = {
       source  = "hashicorp/google-beta"
@@ -22,4 +23,3 @@ terraform {
     }
   }
 }
-

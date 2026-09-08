@@ -1,6 +1,6 @@
 # Modular production GKE foundation
 
-Terraform for a regional GKE Standard cluster, organized like the companion EKS project. The cluster module wraps [`terraform-google-modules/kubernetes-engine/google` v44.3.0](https://github.com/terraform-google-modules/terraform-google-kubernetes-engine/tree/v44.3.0). This repository contains infrastructure and workload templates; no Google Cloud resources have been deployed.
+Terraform for a regional GKE Standard cluster, organized like the companion EKS project. The cluster module wraps [`terraform-google-modules/kubernetes-engine/google` v45.0.0](https://github.com/terraform-google-modules/terraform-google-kubernetes-engine/tree/v45.0.0). This repository contains infrastructure and workload templates; no Google Cloud resources have been deployed.
 
 ```text
 .
@@ -158,7 +158,9 @@ python3 -m pip install -r requirements-dev.txt
 python3 -m unittest discover -s tests -v
 ```
 
-These tests use mock cloud providers and inspect the expanded upstream cluster/node resources. They also check workload policy relationships, HPA rollout headroom, and public/private rendering. They do not validate real project quotas, IAM propagation, regional service support, certificate issuance, CRD/controller behavior, or recovery. Run server-side dry runs and the [operational acceptance checks](docs/operations.md) in staging. Upstream v44.3.0 emits a deprecated `kubernetes_config_map` warning for its disabled IP-masquerade configuration resource; no such resource is planned by this foundation.
+These tests use mock cloud providers and inspect the expanded upstream cluster/node resources. They also check workload policy relationships, HPA rollout headroom, and public/private rendering. They do not validate real project quotas, IAM propagation, regional service support, certificate issuance, CRD/controller behavior, or recovery. Run server-side dry runs and the [operational acceptance checks](docs/operations.md) in staging.
+
+The pinned [v45.0.0 module release](https://github.com/terraform-google-modules/terraform-google-kubernetes-engine/releases/tag/v45.0.0) fixes the deprecated IP-masquerade ConfigMap resource by using `kubernetes_config_map_v1`. It requires Google provider 7.39.0 or newer within version 7; the committed lock file selects 7.46.1. After pulling this update, run `terraform -chdir=terraform init` to download the new module, then validate and generate a fresh saved plan. Keep the provider lock file; editing the downloaded `.terraform/modules` cache is not a durable fix. This foundation leaves `configure_ip_masq` disabled, so it has no IP-masquerade ConfigMap state to migrate.
 
 The GitHub Actions workflow runs these checks with read-only repository permissions and no cloud credentials. Actions are pinned by commit. Production deployment should use a separate, protected pipeline with short-lived federation credentials and a reviewed saved plan.
 
