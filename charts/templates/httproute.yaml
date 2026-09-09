@@ -1,0 +1,92 @@
+{{/*
+Attaches to an already-existing, cluster-shared Gateway (created once at the
+platform/Terraform level — this chart never creates a Gateway). Multiple
+services can share the same Gateway/IP/cert map; each gets its own
+hostname-matched HTTPRoute, and optionally its own Cloud Armor policy and
+health check.
+*/}}
+{{- if .Values.httpRoute.enabled }}
+apiVersion: gateway.networking.k8s.io/v1
+kind: HTTPRoute
+metadata:
+  name: {{ include "mts-ijp.fullname" . }}
+  namespace: {{ include "mts-ijp.namespace" . }}
+  labels:
+    {{- include "mts-ijp.labels" . | nindent 4 }}
+spec:
+  parentRefs:
+    - name: {{ .Values.httpRoute.gateway.name }}
+      namespace: {{ .Values.httpRoute.gateway.namespace }}
+      sectionName: {{ .Values.httpRoute.gateway.sectionName }}
+  hostnames:
+    - {{ required "httpRoute.hostname is required when httpRoute.enabled" .Values.httpRoute.hostname | quote }}
+  rules:
+    {{- range .Values.httpRoute.paths }}
+    - matches:
+        - path:
+            type: {{ .type }}
+            value: {{ .value }}
+      {{- if and .rewritePathPrefix .rewritePathPrefix.enabled }}
+      filters:
+        - type: URLRewrite
+          urlRewrite:
+            path:
+              type: ReplacePrefixMatch
+              replacePrefixMatch: {{ .rewritePathPrefix.value | quote }}
+      {{- end }}
+      backendRefs:
+        - name: {{ include "mts-ijp.fullname" $ }}
+          port: {{ $.Values.service.port }}
+    {{- end }}
+{{- end }}
+{{- if and .Values.httpRoute.enabled .Values.httpRoute.backendPolicy.securityPolicy }}
+---
+apiVersion: networking.gke.io/v1
+kind: GCPBackendPolicy
+metadata:
+  name: {{ include "mts-ijp.fullname" . }}
+  namespace: {{ include "mts-ijp.namespace" . }}
+  labels:
+    {{- include "mts-ijp.labels" . | nindent 4 }}
+spec:
+  default:
+    securityPolicy: {{ .Values.httpRoute.backendPolicy.securityPolicy | quote }}
+    timeoutSec: {{ .Values.httpRoute.backendPolicy.timeoutSec }}
+    connectionDraining:
+      drainingTimeoutSec: {{ .Values.httpRoute.backendPolicy.connectionDrainingSec }}
+    {{- if .Values.httpRoute.backendPolicy.logging }}
+    logging:
+      enabled: true
+      sampleRate: {{ .Values.httpRoute.backendPolicy.logSampleRate }}
+    {{- end }}
+  targetRef:
+    group: ""
+    kind: Service
+    name: {{ include "mts-ijp.fullname" . }}
+{{- end }}
+{{- if and .Values.httpRoute.enabled .Values.httpRoute.healthCheck.enabled }}
+---
+apiVersion: networking.gke.io/v1
+kind: HealthCheckPolicy
+metadata:
+  name: {{ include "mts-ijp.fullname" . }}
+  namespace: {{ include "mts-ijp.namespace" . }}
+  labels:
+    {{- include "mts-ijp.labels" . | nindent 4 }}
+spec:
+  default:
+    checkIntervalSec: {{ .Values.httpRoute.healthCheck.checkIntervalSec }}
+    timeoutSec: {{ .Values.httpRoute.healthCheck.timeoutSec }}
+    healthyThreshold: {{ .Values.httpRoute.healthCheck.healthyThreshold }}
+    unhealthyThreshold: {{ .Values.httpRoute.healthCheck.unhealthyThreshold }}
+    config:
+      type: HTTP
+      httpHealthCheck:
+        portSpecification: USE_FIXED_PORT
+        port: {{ .Values.httpRoute.healthCheck.port | default .Values.containerPort }}
+        requestPath: {{ .Values.httpRoute.healthCheck.path }}
+  targetRef:
+    group: ""
+    kind: Service
+    name: {{ include "mts-ijp.fullname" . }}
+{{- end }}

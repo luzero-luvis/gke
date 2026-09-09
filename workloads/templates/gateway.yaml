@@ -15,7 +15,7 @@ spec:
       protocol: HTTPS
       port: 443
       allowedRoutes:
-        namespaces: {from: Same}
+        namespaces: {from: All}
 ---
 apiVersion: networking.gke.io/v1
 kind: GCPGatewayPolicy

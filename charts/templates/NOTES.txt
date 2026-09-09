@@ -1,0 +1,51 @@
+============================================================================
+  mts-ijp — {{ include "mts-ijp.fullname" . }}
+============================================================================
+
+Service:    {{ include "mts-ijp.fullname" . }}
+Namespace:  {{ include "mts-ijp.namespace" . }}
+Image:      {{ .Values.image.name }}
+Replicas:   {{ .Values.replicaCount }}
+
+{{- if .Values.service.enabled }}
+
+IN-CLUSTER ADDRESS:
+  http://{{ include "mts-ijp.fullname" . }}.{{ include "mts-ijp.namespace" . }}.svc.cluster.local:{{ .Values.service.port }}
+
+  The images resolve each other by bare Service name, so the release names
+  must stay: otp, gateway, backend, frontend, wa-bot.
+{{- end }}
+
+{{- if .Values.envFromSecret.enabled }}
+
+SECRET:
+  {{ .Values.envFromSecret.secretName }} (must exist — this chart does not create it)
+
+  kubectl -n {{ include "mts-ijp.namespace" . }} get secret {{ .Values.envFromSecret.secretName }}
+{{- end }}
+
+{{- if .Values.podDisruptionBudget.enabled }}
+
+DISRUPTION BUDGET:
+  {{- if .Values.podDisruptionBudget.minAvailable }}
+  minAvailable: {{ .Values.podDisruptionBudget.minAvailable }}
+  {{- end }}
+  {{- if .Values.podDisruptionBudget.maxUnavailable }}
+  maxUnavailable: {{ .Values.podDisruptionBudget.maxUnavailable }}
+  {{- end }}
+{{- end }}
+
+USEFUL COMMANDS:
+  # Rollout status
+  kubectl -n {{ include "mts-ijp.namespace" . }} rollout status deploy/{{ include "mts-ijp.fullname" . }}
+
+  # Pods
+  kubectl -n {{ include "mts-ijp.namespace" . }} get pods -l app.kubernetes.io/name={{ include "mts-ijp.name" . }}
+
+  # Logs
+  kubectl -n {{ include "mts-ijp.namespace" . }} logs -l app.kubernetes.io/name={{ include "mts-ijp.name" . }} --tail=50 -f
+
+  # Port-forward
+  kubectl -n {{ include "mts-ijp.namespace" . }} port-forward svc/{{ include "mts-ijp.fullname" . }} {{ .Values.service.port }}:{{ .Values.service.port }}
+
+============================================================================

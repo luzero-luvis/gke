@@ -1,0 +1,90 @@
+{{- if and .Values.persistence.enabled (not .Values.persistence.existingClaim) }}
+{{- if .Values.persistence.volume.create }}
+{{- $v := .Values.persistence.volume }}
+{{- if and (eq $v.type "local") (not $v.nodeName) }}
+{{- fail "persistence.volume.nodeName is required when persistence.volume.type is 'local' — a local PV must declare nodeAffinity" }}
+{{- end }}
+{{- if and (eq $v.type "nfs") (not $v.nfs.server) }}
+{{- fail "persistence.volume.nfs.server is required when persistence.volume.type is 'nfs'" }}
+{{- end }}
+# Static PersistentVolume — for clusters with no dynamic provisioner.
+# Cluster-scoped, so the name is prefixed with the namespace to stay unique.
+apiVersion: v1
+kind: PersistentVolume
+metadata:
+  name: {{ include "mts-ijp.pvName" . }}
+  labels:
+    {{- include "mts-ijp.labels" . | nindent 4 }}
+  {{- if eq $v.reclaimPolicy "Retain" }}
+  annotations:
+    # Survives `helm uninstall` — this volume holds data the chart cannot recreate.
+    helm.sh/resource-policy: keep
+  {{- end }}
+spec:
+  capacity:
+    storage: {{ $v.capacity | default .Values.persistence.size }}
+  accessModes:
+    {{- toYaml .Values.persistence.accessModes | nindent 4 }}
+  persistentVolumeReclaimPolicy: {{ $v.reclaimPolicy }}
+  {{- include "mts-ijp.storageClass" . | nindent 2 }}
+  # Pre-bind to this release's claim so no other PVC can take the volume.
+  claimRef:
+    namespace: {{ include "mts-ijp.namespace" . }}
+    name: {{ include "mts-ijp.pvcName" . }}
+  {{- if eq $v.type "local" }}
+  local:
+    path: {{ $v.path }}
+  # Mandatory for local volumes, and it pins the pod to this node for good.
+  nodeAffinity:
+    required:
+      nodeSelectorTerms:
+        - matchExpressions:
+            - key: kubernetes.io/hostname
+              operator: In
+              values:
+                - {{ $v.nodeName }}
+  {{- else if eq $v.type "hostPath" }}
+  # Single-node only: the scheduler does not know about this path, so on a
+  # multi-node cluster the pod can land where the directory is empty.
+  hostPath:
+    path: {{ $v.path }}
+    type: {{ $v.hostPathType }}
+  {{- else if eq $v.type "nfs" }}
+  nfs:
+    server: {{ $v.nfs.server }}
+    path: {{ $v.nfs.path | default $v.path }}
+    readOnly: {{ $v.nfs.readOnly }}
+  {{- else }}
+  {{- fail (printf "persistence.volume.type %q is not one of: local, hostPath, nfs" $v.type) }}
+  {{- end }}
+---
+{{- end }}
+apiVersion: v1
+kind: PersistentVolumeClaim
+metadata:
+  name: {{ include "mts-ijp.pvcName" . }}
+  namespace: {{ include "mts-ijp.namespace" . }}
+  labels:
+    {{- include "mts-ijp.labels" . | nindent 4 }}
+  {{- if or .Values.persistence.retain .Values.persistence.annotations }}
+  annotations:
+    {{- if .Values.persistence.retain }}
+    helm.sh/resource-policy: keep
+    {{- end }}
+    {{- with .Values.persistence.annotations }}
+    {{- toYaml . | nindent 4 }}
+    {{- end }}
+  {{- end }}
+spec:
+  accessModes:
+    {{- toYaml .Values.persistence.accessModes | nindent 4 }}
+  resources:
+    requests:
+      storage: {{ .Values.persistence.size }}
+  {{- include "mts-ijp.storageClass" . | nindent 2 }}
+  {{- if and .Values.persistence.volume.create (not .Values.persistence.volumeName) }}
+  volumeName: {{ include "mts-ijp.pvName" . }}
+  {{- else if .Values.persistence.volumeName }}
+  volumeName: {{ .Values.persistence.volumeName }}
+  {{- end }}
+{{- end }}

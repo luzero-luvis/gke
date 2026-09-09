@@ -1,0 +1,566 @@
+# mts-ijp Helm Chart - Default Values
+#
+# One generic chart, installed once per service. The release name becomes both
+# the Deployment and the Service name, and the services address each other by
+# those names, so install them as: otp, gateway, backend, frontend, wa-bot,
+# ondc-adapter, ondc-workbench-simulator.
+#
+#   helm install backend charts/mts-ijp -f <your-backend-values>.yaml
+#
+# Everything below is a default; override per service in your own values file.
+
+# Global Configuration
+
+# -- Global values shared across all releases of this chart
+global:
+  # -- Global image pull secrets
+  imagePullSecrets: []
+
+# Service Identity
+
+# -- Override the name of the chart (defaults to the release name)
+nameOverride: ""
+
+# -- Override the full name of the chart
+fullnameOverride: ""
+
+# -- Override the target namespace for deployment
+namespaceOverride: ""
+
+# Container Image Configuration
+
+image:
+  # -- Full image reference including registry, repository, tag, and optional digest
+  # @default -- `""` (required)
+  name: ""
+
+  # -- Image pull policy. `Always` for mutable tags, `IfNotPresent` for digests
+  pullPolicy: IfNotPresent
+
+  # -- Image pull secrets. Can also use global.imagePullSecrets
+  pullSecrets: []
+
+# Deployment Configuration
+
+# -- Number of replicas
+replicaCount: 1
+
+# -- Deployment update strategy
+strategy:
+  type: RollingUpdate
+  rollingUpdate:
+    maxSurge: 1
+    maxUnavailable: 0
+
+# -- Override container command
+command: []
+
+# -- Container arguments
+args: []
+
+# -- Init containers, each run to completion before the main container starts.
+# Full container specs. Used to fetch data into a shared volume — see
+# charts/values/otp.yaml, which pulls the GTFS/OSM artifact from the registry.
+initContainers: []
+
+# Service Configuration
+
+service:
+  # -- Create the Service
+  enabled: true
+
+  # -- Kubernetes service type
+  type: ClusterIP
+
+  # -- Service port (external port exposed by the service)
+  port: 80
+
+  # -- Target port (container port that the service routes to)
+  targetPort: http
+
+  # -- Service protocol
+  protocol: TCP
+
+  # -- Additional service ports (for multi-port services)
+  additionalPorts: []
+
+  # -- Service annotations
+  annotations: {}
+
+  # -- Service labels
+  labels: {}
+
+  # -- Session affinity for client IP stickiness
+  sessionAffinity: None
+
+  # -- Load balancer source ranges (when type=LoadBalancer)
+  loadBalancerSourceRanges: []
+
+# Gateway API HTTPRoute Configuration
+#
+# Attaches to an already-existing, cluster-shared GKE Gateway (created once
+# at the platform/Terraform level — this chart never creates a Gateway).
+# Multiple services can share the same Gateway/static IP/cert map; each gets
+# its own hostname-matched HTTPRoute here. Only services that need a public
+# endpoint should set httpRoute.enabled: true.
+httpRoute:
+  # -- Create an HTTPRoute for this service
+  enabled: false
+
+  # -- Reference to the pre-existing shared Gateway. Its allowedRoutes must
+  # permit this release's namespace (From: All, or a namespace selector) if
+  # this service isn't deployed into the Gateway's own namespace.
+  gateway:
+    name: app
+    namespace: apps
+    sectionName: https
+
+  # -- Public hostname this service answers on. Required when enabled.
+  hostname: ""
+
+  # -- Path matches for the route. One service can answer on several path
+  # prefixes on the same hostname (e.g. a service with two independent
+  # route groups). Each entry can optionally rewrite its matched prefix
+  # before forwarding — for a backend whose own routes are root-relative
+  # (e.g. /webhook) but which is exposed under a shared hostname at a
+  # sub-path (e.g. /wa). rewritePathPrefix.value: "" strips the matched
+  # prefix entirely (e.g. /wa/webhook -> /webhook).
+  paths:
+    - type: PathPrefix
+      value: /
+      rewritePathPrefix:
+        enabled: false
+        value: ""
+
+  # GKE-specific backend policy (networking.gke.io/GCPBackendPolicy CRD).
+  backendPolicy:
+    # -- Cloud Armor security policy name (created by Terraform). Leave
+    # empty to skip creating a GCPBackendPolicy for this service.
+    securityPolicy: ""
+    timeoutSec: 30
+    connectionDrainingSec: 30
+    logging: true
+    logSampleRate: 1
+
+  # GKE-specific health check (networking.gke.io/HealthCheckPolicy CRD).
+  healthCheck:
+    # -- Create a HealthCheckPolicy for this backend
+    enabled: false
+    path: /
+    # -- Defaults to containerPort when empty
+    port: ""
+    checkIntervalSec: 10
+    timeoutSec: 5
+    healthyThreshold: 2
+    unhealthyThreshold: 3
+
+# Secret Manager sync (Secrets Store CSI Driver)
+#
+# Fetches Secret Manager secrets and syncs them into a real Kubernetes
+# Secret, which envFromSecret then loads as env vars. Requires this
+# release's KSA (serviceAccountName) to be bound via Workload Identity to a
+# GSA holding roles/secretmanager.secretAccessor — scope that grant to only
+# the secrets this service actually needs, not every secret in the project.
+secretProviderClass:
+  # -- Create a SecretProviderClass and mount it (mounting is what triggers
+  # the sync into a Kubernetes Secret; the CSI volume itself is unused
+  # otherwise, but must be mounted for the driver to run)
+  enabled: false
+
+  # -- Numeric GCP project number (not the project ID) holding the secrets
+  projectNumber: ""
+
+  # -- Name of the synced Kubernetes Secret. envFromSecret.secretName
+  # should usually match this.
+  secretName: ""
+
+  # -- Secret Manager entries to sync. `key` becomes the env var name once
+  # loaded via envFromSecret; `secretId` is the Secret Manager secret ID
+  # (short name, not the full resource path); `version` defaults to latest.
+  secrets: []
+  # - key: OTP_PLANNER_SECRET
+  #   secretId: mts-ijp-otp-planner-secret
+  #   version: latest
+
+# Container Ports Configuration
+
+# -- Primary container port
+containerPort: 8080
+
+# -- Additional container ports
+additionalPorts: []
+
+# Environment Variables
+
+# -- Environment variables as key-value pairs (for non-sensitive data)
+env: []
+
+# -- Environment variables from ConfigMap or Secret
+envFrom: []
+
+# -- Environment variables loaded from an existing Secret.
+# This chart never creates the Secret — credentials do not belong in a
+# committed values.yaml. Create it once per namespace:
+#
+#   kubectl -n <ns> create secret generic mts-ijp-secrets \
+#     --from-literal=OTP_PLANNER_SECRET="$(openssl rand -hex 32)" \
+#     --from-literal=OPENROUTER_API_KEY=... \
+#     --from-literal=WHATSAPP_TOKEN=... \
+#     --from-literal=PHONE_NUMBER_ID=... \
+#     --from-literal=VERIFY_TOKEN=...
+envFromSecret:
+  # -- Enable loading environment from the Secret
+  enabled: false
+  # -- Name of the existing Secret
+  secretName: ""
+
+# Health Checks and Probes
+
+readinessProbe:
+  # -- Enable readiness probe
+  enabled: true
+
+  # -- Probe type: httpGet, exec, tcpSocket, or grpc
+  type: tcpSocket
+
+  # -- HTTP GET probe configuration
+  httpGet:
+    # -- HTTP path to probe
+    path: /
+    # -- HTTP port to probe
+    port: http
+    # -- HTTP scheme (HTTP or HTTPS)
+    scheme: HTTP
+    # -- HTTP headers to send with the request
+    httpHeaders: []
+
+  # -- Exec probe configuration (when type=exec)
+  exec:
+    # -- Command to execute for health check
+    command: []
+
+  # -- TCP socket probe configuration (when type=tcpSocket)
+  tcpSocket:
+    # -- TCP port to probe
+    port: http
+
+  # -- gRPC probe configuration (when type=grpc)
+  grpc:
+    # -- gRPC port to probe
+    port: 8080
+    # -- gRPC service name
+    service: ""
+
+  # -- Seconds after container start before the probe is initiated
+  initialDelaySeconds: 5
+  # -- How often (in seconds) to perform the probe
+  periodSeconds: 10
+  # -- Seconds after which the probe times out
+  timeoutSeconds: 5
+  # -- Consecutive successes for the probe to be considered successful
+  successThreshold: 1
+  # -- Consecutive failures for the probe to be considered failed
+  failureThreshold: 3
+
+livenessProbe:
+  # -- Enable liveness probe
+  enabled: true
+
+  # -- Probe type: httpGet, exec, tcpSocket, or grpc
+  type: tcpSocket
+
+  httpGet:
+    path: /
+    port: http
+    scheme: HTTP
+    httpHeaders: []
+
+  exec:
+    command: []
+
+  tcpSocket:
+    port: http
+
+  grpc:
+    port: 8080
+    service: ""
+
+  initialDelaySeconds: 20
+  periodSeconds: 30
+  timeoutSeconds: 5
+  successThreshold: 1
+  failureThreshold: 6
+
+startupProbe:
+  # -- Enable startup probe for slow-starting containers
+  enabled: false
+
+  # -- Probe type: httpGet, exec, tcpSocket, or grpc
+  type: tcpSocket
+
+  httpGet:
+    path: /
+    port: http
+    scheme: HTTP
+    httpHeaders: []
+
+  exec:
+    command: []
+
+  tcpSocket:
+    port: http
+
+  grpc:
+    port: 8080
+    service: ""
+
+  initialDelaySeconds: 0
+  periodSeconds: 10
+  timeoutSeconds: 5
+  successThreshold: 1
+  failureThreshold: 30
+
+# Resource Management
+
+# -- Resource requests and limits (no CPU limit by design to prevent throttling)
+resources:
+  requests:
+    cpu: 50m
+    memory: 64Mi
+  limits:
+    memory: 256Mi
+
+# Security Context
+
+# -- Pod-level security context
+podSecurityContext:
+  runAsNonRoot: true
+  runAsUser: 1000
+  runAsGroup: 1000
+  fsGroup: 1000
+  seccompProfile:
+    type: RuntimeDefault
+
+# -- Container-level security context
+securityContext:
+  runAsNonRoot: true
+  runAsUser: 1000
+  runAsGroup: 1000
+  # -- Read-only root filesystem (recommended)
+  readOnlyRootFilesystem: true
+  allowPrivilegeEscalation: false
+  capabilities:
+    drop:
+      - ALL
+  seccompProfile:
+    type: RuntimeDefault
+
+# Service Account
+
+# -- Name of an existing ServiceAccount to run as. Empty uses `default`.
+serviceAccountName: ""
+
+# -- Automatically mount the ServiceAccount token
+automountServiceAccountToken: false
+
+# Pod Configuration
+
+# -- Termination grace period in seconds
+terminationGracePeriodSeconds: 30
+
+# -- DNS policy for the pod
+dnsPolicy: ClusterFirst
+
+# -- DNS configuration for the pod
+dnsConfig: {}
+
+# -- Host aliases for the pod
+hostAliases: []
+
+# -- Enable host network mode
+hostNetwork: false
+
+# -- Share process namespace between containers
+shareProcessNamespace: false
+
+# -- Run the pod in a user namespace (Kubernetes 1.33+). Remove this key on
+# older clusters.
+hostUsers: false
+
+# -- Lifecycle hooks. The preStop sleep lets in-flight requests drain before
+# SIGTERM, once the endpoint has been removed from Service routing.
+lifecycle:
+  preStop:
+    exec:
+      command:
+        - /bin/sh
+        - -c
+        - sleep 5
+
+# Scheduling Configuration
+
+# -- Node selector for pod assignment
+nodeSelector: {}
+
+# -- Tolerations for pod assignment
+tolerations: []
+
+# -- Affinity rules for pod assignment
+affinity: {}
+
+# -- Topology spread constraints for high availability
+topologySpreadConstraints:
+  # -- Enable topology spread constraints
+  enabled: false
+  # -- Constraint rules. labelSelector is populated by the chart.
+  constraints:
+    - maxSkew: 1
+      topologyKey: kubernetes.io/hostname
+      whenUnsatisfiable: ScheduleAnyway
+
+# -- Priority class name for pod scheduling
+priorityClassName: ""
+
+# -- Runtime class name for the pod
+runtimeClassName: ""
+
+# Volumes and Volume Mounts
+
+# -- Additional volumes for the pod
+volumes: []
+
+# -- Additional volume mounts for the container
+volumeMounts: []
+
+# -- Temporary volume (mounted at /tmp when readOnlyRootFilesystem=true)
+tmpVolume:
+  # -- Enable the temporary volume
+  enabled: true
+  # -- Size limit for the temporary volume
+  sizeLimit: 512Mi
+
+# Persistence
+#
+# Only two services in this repo need a volume:
+#
+#   ondc-adapter  SQLite at ONDC_ADAPTER_DB holding the `transactions` and
+#                 `messages` tables (adapter/app.py). Writable, and it must
+#                 survive restarts — `_connection()` silently creates a fresh
+#                 empty database when the path is missing.
+#
+#   otp           The three GTFS zips plus mumbai.osm.pbf, read from
+#                 /var/opentripplanner. These are not in the repo, so the volume
+#                 has to be seeded before the first start or `--build` produces
+#                 an empty graph.
+#
+# backend can optionally mount the GTFS Fares v2 CSVs read-only; without them it
+# logs "fare load failed" and falls back to a distance estimate.
+# frontend, wa-bot and ondc-workbench-simulator write nothing to disk.
+persistence:
+  # -- Mount a PersistentVolumeClaim into the container
+  enabled: false
+
+  # -- Use an existing claim instead of creating one. Skips PV/PVC creation.
+  existingClaim: ""
+
+  # -- StorageClass for the PVC:
+  #      ""  omit the field — use the cluster's default StorageClass
+  #      "-" storageClassName: "" — no class, required to bind a static PV
+  #      any that class name, e.g. "longhorn"
+  storageClass: ""
+
+  # -- Bind to a specific PersistentVolume by name. Set automatically when
+  # `persistence.volume.create` is true.
+  volumeName: ""
+
+  # -- Access modes for the claim
+  accessModes:
+    - ReadWriteOnce
+
+  # -- Requested volume size
+  size: 5Gi
+
+  # -- Path the volume is mounted at inside the container
+  mountPath: /data
+
+  # -- Mount only a sub-directory of the volume
+  subPath: ""
+
+  # -- Mount the volume read-only
+  readOnly: false
+
+  # -- Keep the PVC on `helm uninstall`
+  retain: true
+
+  # -- Extra annotations for the PVC
+  annotations: {}
+
+  # Static provisioning — for clusters with no dynamic provisioner, where a PVC
+  # would otherwise sit Pending forever. Check with `kubectl get storageclass`
+  # first; if a default class exists, leave `volume.create` false.
+  #
+  # When enabled, set `persistence.storageClass: "-"` so neither the PV nor the
+  # PVC gets claimed by a default StorageClass.
+  volume:
+    # -- Create a PersistentVolume alongside the claim
+    create: false
+
+    # -- PV name. Defaults to <namespace>-<release>-pv (PVs are cluster-scoped)
+    name: ""
+
+    # -- Backing type: `local`, `hostPath`, or `nfs`
+    type: local
+
+    # -- Directory on the node (local/hostPath). Must exist before the pod starts.
+    path: /srv/mts-ijp/data
+
+    # -- Node holding the data. Required for `local`, and it pins the pod there
+    # permanently — fine for the single-replica services, but a node failure
+    # becomes an outage rather than a reschedule.
+    nodeName: ""
+
+    # -- PV capacity. Defaults to `persistence.size`. Not enforced for
+    # local/hostPath volumes — it is only matchmaking metadata.
+    capacity: ""
+
+    # -- Reclaim policy. `Retain` leaves the PV `Released` after the PVC is
+    # deleted; clear spec.claimRef before it will bind again.
+    reclaimPolicy: Retain
+
+    # -- hostPath type check (hostPath only)
+    hostPathType: DirectoryOrCreate
+
+    # -- NFS settings (type: nfs)
+    nfs:
+      # -- NFS server hostname or IP
+      server: ""
+      # -- Export path. Falls back to `volume.path`
+      path: ""
+      # -- Mount the export read-only
+      readOnly: false
+
+# PodDisruptionBudget Configuration
+
+podDisruptionBudget:
+  # -- Enable PodDisruptionBudget for high availability
+  enabled: false
+
+  # -- Minimum available pods (use minAvailable OR maxUnavailable, not both)
+  minAvailable: 1
+
+  # -- Unhealthy pod eviction policy (Kubernetes 1.26+)
+  unhealthyPodEvictionPolicy: IfHealthyBudget
+
+# Labels and Annotations
+
+# -- Common labels applied to all resources
+commonLabels: {}
+
+# -- Additional labels for pods
+podLabels: {}
+
+# -- Additional annotations for pods
+podAnnotations: {}
+
+# -- Annotations for the Deployment resource
+deploymentAnnotations: {}

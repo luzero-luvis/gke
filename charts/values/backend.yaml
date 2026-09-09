@@ -1,0 +1,60 @@
+# backend — Flask API. Public at gke.luzero.online/api (its own routes are
+# already prefixed /api/*, so no path rewrite needed).
+image:
+  name: asia-south1-docker.pkg.dev/spartan-calling-484711-e5/test-gke-apps/backend@sha256:ed0eee759df88ef7e814f9694ba9919c7973e387039ac8a2b714ca9c3ba2705c
+
+containerPort: 5050
+
+env:
+  - name: PORT
+    value: "5050"
+  - name: OTP_URL
+    value: http://gateway/otp/gtfs/v1
+  - name: OTP_GATEWAY_URL
+    value: http://gateway
+  - name: WA_BOT_URL
+    value: http://wa-bot
+
+serviceAccountName: backend
+
+# jwtutil.py reads OTP_PLANNER_SECRET to sign the JWT backend sends to
+# gateway. Without the real value here (Dockerfile only bakes in the
+# placeholder "changeme"), gateway's signature check fails with 401 and
+# /api/health permanently reports "otp": "down" even though otp/gateway
+# are both actually fine.
+secretProviderClass:
+  enabled: true
+  projectNumber: "946971495041"
+  secretName: backend-secrets
+  secrets:
+    - key: OTP_PLANNER_SECRET
+      secretId: mts-ijp-otp-planner-secret
+
+# This cluster's Secret Manager CSI add-on doesn't run the sync-to-Secret
+# controller, only the CSI mount itself — read the mounted file directly.
+command: ["sh", "-c"]
+args:
+  - |
+    export OTP_PLANNER_SECRET="$(cat /mnt/secrets-store/OTP_PLANNER_SECRET)"
+    exec python app.py
+
+readinessProbe:
+  type: httpGet
+  httpGet:
+    path: /api/health
+    port: http
+livenessProbe:
+  type: httpGet
+  httpGet:
+    path: /api/health
+    port: http
+
+httpRoute:
+  enabled: true
+  hostname: gke.luzero.online
+  healthCheck:
+    enabled: true
+    path: /api/health
+  paths:
+    - type: PathPrefix
+      value: /api

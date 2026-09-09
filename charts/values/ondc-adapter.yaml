@@ -1,0 +1,69 @@
+# ondc-adapter — FastAPI ONDC TRV10 BAP. Its own routes are root-relative
+# (/health, /{action}), so it's exposed at gke.luzero.online/ondc with the
+# prefix stripped before forwarding. This means the real ONDC network
+# registration for this BAP's callback base URL must be
+# https://gke.luzero.online/ondc — register it exactly that way.
+image:
+  name: asia-south1-docker.pkg.dev/spartan-calling-484711-e5/test-gke-apps/ondc-adapter@sha256:67997b64f100866e846979fe95a87c7798fa98550fb5c2bb906e28acd51c60b3
+
+containerPort: 5060
+
+env:
+  - name: ONDC_ADAPTER_PORT
+    value: "5060"
+  - name: ONDC_ADAPTER_DB
+    value: /data/adapter.sqlite3
+  - name: MOBILITY_API_NOTIFY_URL
+    value: http://mobility-api/mobility/v1/internal/ondc-events
+
+serviceAccountName: ondc-adapter
+
+secretProviderClass:
+  enabled: true
+  projectNumber: "946971495041"
+  secretName: ondc-adapter-secrets
+  secrets:
+    - key: MOBILITY_API_NOTIFY_SECRET
+      secretId: mts-ijp-mobility-api-notify-secret
+
+# This cluster's Secret Manager CSI add-on doesn't run the sync-to-Secret
+# controller, only the CSI mount itself — envFromSecret against a synced
+# Secret never materializes. Read the mounted file directly instead.
+command: ["sh", "-c"]
+args:
+  - |
+    export MOBILITY_API_NOTIFY_SECRET="$(cat /mnt/secrets-store/MOBILITY_API_NOTIFY_SECRET)"
+    exec python -m uvicorn adapter.app:app --host 0.0.0.0 --port 5060
+
+# SQLite at ONDC_ADAPTER_DB holding `transactions`/`messages` — must survive
+# restarts, per the chart's own persistence.enabled comment.
+persistence:
+  enabled: true
+  mountPath: /data
+  size: 2Gi
+
+readinessProbe:
+  type: httpGet
+  httpGet:
+    path: /health
+    port: http
+livenessProbe:
+  type: httpGet
+  httpGet:
+    path: /health
+    port: http
+
+httpRoute:
+  enabled: true
+  hostname: gke.luzero.online
+  # The LB health check hits the pod directly, bypassing the HTTPRoute
+  # rewrite, so this is the real internal path, not /ondc/health.
+  healthCheck:
+    enabled: true
+    path: /health
+  paths:
+    - type: PathPrefix
+      value: /ondc
+      rewritePathPrefix:
+        enabled: true
+        value: ""

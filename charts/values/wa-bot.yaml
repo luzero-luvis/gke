@@ -1,0 +1,72 @@
+# wa-bot — WhatsApp webhook bot (Node/Express). Root-relative routes
+# (/webhook, /health), exposed at gke.luzero.online/wa with the prefix
+# stripped. Register this exact URL as the WhatsApp Business webhook:
+# https://gke.luzero.online/wa/webhook
+image:
+  name: asia-south1-docker.pkg.dev/spartan-calling-484711-e5/test-gke-apps/wa-bot@sha256:882e2c5c22b38389ee7327b4e549c87203342b578d22cb0be3801a6f1812b24c
+
+containerPort: 3000
+
+env:
+  - name: BACKEND_URL
+    value: http://backend
+  - name: GRAPH_VERSION
+    value: v21.0
+  - name: OTP_PUBLIC_URL
+    value: https://gke.luzero.online
+  - name: LLM_MODEL
+    value: google/gemini-2.5-flash
+
+serviceAccountName: wa-bot
+
+secretProviderClass:
+  enabled: true
+  projectNumber: "946971495041"
+  secretName: wa-bot-secrets
+  secrets:
+    - key: WHATSAPP_TOKEN
+      secretId: mts-ijp-whatsapp-token
+    - key: PHONE_NUMBER_ID
+      secretId: mts-ijp-whatsapp-phone-number-id
+    - key: VERIFY_TOKEN
+      secretId: mts-ijp-wa-verify-token
+    - key: OPENROUTER_API_KEY
+      secretId: mts-ijp-openrouter-api-key
+
+# This cluster's Secret Manager CSI add-on doesn't run the sync-to-Secret
+# controller, only the CSI mount itself — envFromSecret against a synced
+# Secret never materializes. Read the mounted files directly instead.
+command: ["sh", "-c"]
+args:
+  - |
+    export WHATSAPP_TOKEN="$(cat /mnt/secrets-store/WHATSAPP_TOKEN)"
+    export PHONE_NUMBER_ID="$(cat /mnt/secrets-store/PHONE_NUMBER_ID)"
+    export VERIFY_TOKEN="$(cat /mnt/secrets-store/VERIFY_TOKEN)"
+    export OPENROUTER_API_KEY="$(cat /mnt/secrets-store/OPENROUTER_API_KEY)"
+    exec node server.js
+
+readinessProbe:
+  type: httpGet
+  httpGet:
+    path: /health
+    port: http
+livenessProbe:
+  type: httpGet
+  httpGet:
+    path: /health
+    port: http
+
+httpRoute:
+  enabled: true
+  hostname: gke.luzero.online
+  # The LB health check hits the pod directly, bypassing the HTTPRoute
+  # rewrite, so this is the real internal path, not /wa/health.
+  healthCheck:
+    enabled: true
+    path: /health
+  paths:
+    - type: PathPrefix
+      value: /wa
+      rewritePathPrefix:
+        enabled: true
+        value: ""

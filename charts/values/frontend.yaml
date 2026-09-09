@@ -1,0 +1,22 @@
+# frontend — React SPA served by a small Node server (serve.cjs), not
+# nginx despite the docker-compose comment. Public at gke.luzero.online/
+# (catch-all — lowest route precedence, everything more specific above
+# wins). Its own server also internally proxies /api and /webhook, but
+# those are served directly by backend/wa-bot's own routes here instead.
+image:
+  name: asia-south1-docker.pkg.dev/spartan-calling-484711-e5/test-gke-apps/frontend@sha256:b1c6dcd3135d9dbebe368051ebf334243fa04297e132cd33956ea8b4cc581fc6
+
+containerPort: 55555
+
+env:
+  - name: BACKEND_URL
+    value: http://backend
+  - name: WA_BOT_URL
+    value: http://wa-bot
+
+httpRoute:
+  enabled: true
+  hostname: gke.luzero.online
+  paths:
+    - type: PathPrefix
+      value: /

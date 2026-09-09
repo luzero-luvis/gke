@@ -1,0 +1,60 @@
+# mobility-api — client-facing FastAPI service. Public at
+# gke.luzero.online/api/v1 (more specific than backend's /api, so Gateway
+# API routes /api/v1/* here and everything else under /api/* to backend).
+image:
+  name: asia-south1-docker.pkg.dev/spartan-calling-484711-e5/test-gke-apps/mobility-api@sha256:2be0d1d28caf3aeed6cb4640f94cef408ef6999819fa8b4cf4d5345cac9cc675
+
+containerPort: 8000
+
+env:
+  - name: ONDC_ADAPTER_URL
+    value: http://ondc-adapter
+
+serviceAccountName: mobility-api
+
+secretProviderClass:
+  enabled: true
+  projectNumber: "946971495041"
+  secretName: mobility-api-secrets
+  secrets:
+    - key: ADAPTER_NOTIFY_SECRET
+      secretId: mts-ijp-adapter-notify-secret
+
+# This cluster's Secret Manager CSI add-on doesn't run the sync-to-Secret
+# controller, only the CSI mount itself — envFromSecret against a synced
+# Secret never materializes. Read the mounted file directly instead.
+command: ["sh", "-c"]
+args:
+  - |
+    export ADAPTER_NOTIFY_SECRET="$(cat /mnt/secrets-store/ADAPTER_NOTIFY_SECRET)"
+    export UV_CACHE_DIR=/tmp/uv-cache
+    exec uv run uvicorn app.main:app --host 0.0.0.0 --port 8000
+
+readinessProbe:
+  type: httpGet
+  httpGet:
+    path: /api/v1/health
+    port: http
+livenessProbe:
+  type: httpGet
+  httpGet:
+    path: /api/v1/health
+    port: http
+
+httpRoute:
+  enabled: true
+  hostname: gke.luzero.online
+  # Without this, GKE's Gateway defaults the GCP-level backend health check
+  # to "/", which 404s and marks the backend UNHEALTHY at the LB even
+  # though the pod itself is fine — point it at the real health path.
+  healthCheck:
+    enabled: true
+    path: /api/v1/health
+  # mobility.py has ~13 public endpoints under /mobility/v1 (create trip,
+  # quotes, etc.) plus the health check under /api/v1 (api_router) — both
+  # need to be reachable.
+  paths:
+    - type: PathPrefix
+      value: /api/v1
+    - type: PathPrefix
+      value: /mobility/v1

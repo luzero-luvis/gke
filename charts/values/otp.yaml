@@ -1,0 +1,116 @@
+# otp — OpenTripPlanner
+#
+# Mirrors docker-compose.yml's `otp` service. GTFS/OSM inputs are not in the
+# image or the repo's container context — they're fetched from GCS into a
+# PersistentVolumeClaim by an initContainer before OTP starts, matching
+# docker-compose's four individual file mounts under /var/opentripplanner
+# exactly (OTP's --build walks that directory and expects only these files).
+#
+# Deployed into the same GKE cluster as luvis-in/gke (test-gke, project
+# spartan-calling-484711-e5), namespace mts-ijp. That project's Terraform
+# doesn't manage this bucket/SA — they're specific to mts-ijp and were
+# created directly:
+#
+#   gs://spartan-calling-484711-e5-mts-ijp-gtfs (asia-south1) — holds the
+#     4 files, uploaded from the repo root.
+#   otp-gcs-reader@spartan-calling-484711-e5.iam.gserviceaccount.com —
+#     roles/storage.objectViewer on that bucket only.
+#   KSA `otp` in namespace `mts-ijp`, Workload Identity bound to the GSA
+#     above (roles/iam.workloadIdentityUser on
+#     spartan-calling-484711-e5.svc.id.goog[mts-ijp/otp]).
+#
+# install: helm install otp charts/mts-ijp -f charts/values/otp.yaml \
+#   --namespace mts-ijp
+
+# The PVC is ReadWriteOnce (single-writer) and this is a single replica, so
+# the chart's default RollingUpdate (surge a new pod before killing the old
+# one) deadlocks: the new pod can't attach the volume while the old pod
+# still holds it, and the old pod never gets killed because the new one
+# never becomes Ready. Recreate avoids this by killing the old pod first.
+strategy:
+  type: Recreate
+
+image:
+  # Pin by digest before production use; a mutable tag is fine for testing.
+  name: opentripplanner/opentripplanner:2.9.0
+
+containerPort: 8080
+
+# docker-compose used `command: ["--build", "--serve"]`, which in Compose
+# overrides CMD but keeps the image's own ENTRYPOINT — that maps to `args`
+# here, not `command` (which would replace the entrypoint entirely).
+args:
+  - --build
+  - --serve
+
+env:
+  # -Xmx1g OOM'd building the real graph (41k+ trips, interlining across
+  # 37k pairs) — this dataset needs more heap than the docker-compose
+  # default assumed.
+  - name: JAVA_OPTIONS
+    value: -Xmx2g
+
+# Heap (2g) plus headroom for JVM overhead + off-heap graph build memory.
+resources:
+  requests:
+    cpu: 500m
+    memory: 2560Mi
+  limits:
+    memory: 3Gi
+
+# Building a metro+bus+auto GTFS graph from scratch can take minutes; give
+# it real headroom before liveness/readiness start acting on it. (Defaults
+# are tcpSocket already; only the timing needs to change here.)
+startupProbe:
+  enabled: true
+  type: tcpSocket
+  initialDelaySeconds: 10
+  periodSeconds: 10
+  failureThreshold: 60 # up to ~10 minutes for --build before startup fails
+readinessProbe:
+  initialDelaySeconds: 0 # startupProbe already gates traffic until ready
+livenessProbe:
+  initialDelaySeconds: 0
+
+serviceAccountName: otp # KSA created in the Workload Identity step above
+
+persistence:
+  enabled: true
+  mountPath: /var/opentripplanner
+  size: 5Gi
+  readOnly: true # OTP only reads; the initContainer is the sole writer
+
+initContainers:
+  - name: fetch-gtfs
+    image: google/cloud-sdk:slim
+    # The mts-ijp namespace enforces the `restricted` Pod Security Standard.
+    # Pod-level securityContext (runAsNonRoot/runAsUser/fsGroup) is inherited
+    # automatically, but these container-level fields are not — initContainers
+    # are raw specs the chart doesn't touch, so they must be set explicitly
+    # or the API server rejects the pod outright.
+    securityContext:
+      allowPrivilegeEscalation: false
+      capabilities:
+        drop: [ALL]
+      seccompProfile:
+        type: RuntimeDefault
+    # Runs as the pod's non-root UID (podSecurityContext); gcloud needs a
+    # writable $HOME for its config/credential cache. Reuse the chart's own
+    # "tmp" emptyDir (already created since readOnlyRootFilesystem + tmpVolume
+    # are both on by default) rather than declaring a new volume.
+    env:
+      - name: HOME
+        value: /tmp
+    command:
+      - sh
+      - -c
+      - |
+        set -eu
+        for f in best_gtfs.zip mumbai-metro-gtfs.zip shared-auto-gtfs.zip mumbai.osm.pbf; do
+          gcloud storage cp "gs://spartan-calling-484711-e5-mts-ijp-gtfs/$f" "/var/opentripplanner/$f"
+        done
+    volumeMounts:
+      - name: data
+        mountPath: /var/opentripplanner
+      - name: tmp
+        mountPath: /tmp

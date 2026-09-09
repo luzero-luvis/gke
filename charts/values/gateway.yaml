@@ -1,0 +1,30 @@
+# gateway — JWT gateway in front of OTP. Internal only, no httpRoute.
+image:
+  name: asia-south1-docker.pkg.dev/spartan-calling-484711-e5/test-gke-apps/gateway@sha256:0d9a987f446c7c5e657c008e1dbc058d019639e61b93bd20a2d4a14fd75a73ec
+
+containerPort: 8083
+
+env:
+  - name: OTP_GATEWAY_TARGET
+    value: http://otp # otp Service, default port 80
+  - name: OTP_GATEWAY_PORT
+    value: "8083"
+
+serviceAccountName: gateway
+
+secretProviderClass:
+  enabled: true
+  projectNumber: "946971495041"
+  secretName: gateway-secrets
+  secrets:
+    - key: OTP_PLANNER_SECRET
+      secretId: mts-ijp-otp-planner-secret
+
+# This cluster's Secret Manager CSI add-on doesn't run the sync-to-Secret
+# controller, only the CSI mount itself — envFromSecret against a synced
+# Secret never materializes. Read the mounted file directly instead.
+command: ["sh", "-c"]
+args:
+  - |
+    export OTP_PLANNER_SECRET="$(cat /mnt/secrets-store/OTP_PLANNER_SECRET)"
+    exec python gateway.py
