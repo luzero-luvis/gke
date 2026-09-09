@@ -137,6 +137,8 @@ every module under `terraform/modules/*` for `resource "..."` blocks:
 | `roles/secretmanager.admin` | Secret Manager IAM bindings on existing secrets |
 | `roles/serviceusage.serviceUsageAdmin` | Enables required GCP APIs |
 | `roles/iam.serviceAccountUser` | Lets Terraform/GKE act as the service accounts it creates |
+| `roles/binaryauthorization.policyAdmin` | Sets the project's Binary Authorization admission policy |
+| `roles/storage.admin` | Creates the Terraform state bucket (`bootstrap/`) |
 
 Grant them (run as an account that already has `roles/owner` or
 `roles/resourcemanager.projectIamAdmin`, e.g. the project creator):
@@ -159,6 +161,8 @@ ROLES=(
   roles/secretmanager.admin
   roles/serviceusage.serviceUsageAdmin
   roles/iam.serviceAccountUser
+  roles/binaryauthorization.policyAdmin
+  roles/storage.admin
 )
 for ROLE in "${ROLES[@]}"; do
   gcloud projects add-iam-policy-binding "$PROJECT" \
@@ -289,3 +293,141 @@ cd terraform
 terraform init
 terraform plan
 ```
+
+## 9. Troubleshooting
+
+### Missing an IAM role mid-apply
+
+If a limited-access account is missing a role, `apply` fails partway with a
+`403 Permission '...' denied` error on one specific resource. Grant the
+missing role (`gcloud projects add-iam-policy-binding`, same pattern as
+step 5) and re-run `apply` — it resumes from where it left off, it does
+not restart from scratch. Two roles this repo's own testing missed on the
+first pass: `roles/binaryauthorization.policyAdmin` (for
+`google_binary_authorization_policy`) and `roles/storage.admin` (for the
+`bootstrap/` state bucket) — both are already included in the table/loop
+above now.
+
+### `GCE_STOCKOUT` / `ZONE_RESOURCE_POOL_EXHAUSTED` during cluster creation
+
+GCP had no spare capacity for the requested machine type in one zone.
+This is Google's own physical capacity limit, not a quota, billing, or
+config problem — retrying with a different `machine_type` doesn't
+necessarily help if it's the *zone* that's constrained rather than the
+instance family. Signs it's zone-specific: the same zone fails across
+multiple different machine types.
+
+There's no way to cancel a `CREATE_CLUSTER` operation once it's running
+(`gcloud container operations cancel` explicitly rejects it), and you
+can't delete the cluster while that operation is still `RUNNING`
+(`Cluster is running incompatible operation`). GKE's own instance-group
+retry loop can keep trying for anywhere from ~30 minutes to a few hours
+before it gives up on its own — there's no documented fixed timeout, and
+no CLI/API override. Options once it finally reports `DONE` with the
+stockout error in
+`gcloud container operations describe <op> --region=<region> --format="yaml(status,error)"`:
+
+```
+gcloud container clusters delete <cluster> --region=<region> --quiet
+```
+
+Then either wait longer and retry the same zones, or route around the bad
+zone:
+
+- **Drop to 2 zones** in the same region if only one zone is affected —
+  requires loosening the `length(var.zones) == 3` validation in both
+  `terraform/variables.tf` and `terraform/modules/gke-cluster/variables.tf`
+  to `>= 2`, then setting `zones` in `terraform.tfvars` to the two healthy
+  zones. Slightly reduces HA versus 3 zones.
+- **Switch region entirely** — no code changes needed, just update
+  `region`, `zones`, and `backup_region` in `terraform.tfvars`. Better if
+  the whole region looks constrained, not just one zone.
+
+Since the cluster never finished creating, it's never written into
+Terraform state — `terraform destroy` has nothing to target. Cleanup has
+to go through `gcloud` directly in this specific case.
+
+### "tainted" resource wants to destroy+recreate something that's actually fine
+
+If an `apply` gets interrupted (Ctrl+C, a crash) right as a resource
+finishes creating, Terraform marks it **tainted** in state — a
+just-in-case flag meaning "I can't confirm this came out right, destroy
+and recreate it next time." If you've confirmed via `gcloud`/Console that
+the real resource is healthy and matches config, don't let Terraform
+destroy it — untaint instead:
+
+```
+terraform untaint '<resource address from `terraform plan`>'
+```
+
+Re-run `terraform plan` afterward; it should show `0 to destroy` for that
+resource.
+
+### `google_monitoring_alert_policy` rejects the aligner with a 400 error
+
+Example: `Field aggregation.perSeriesAligner had an invalid value of
+"ALIGN_COUNT": The aligner cannot be applied to metrics with kind DELTA
+and value type DISTRIBUTION.` Not every `per_series_aligner` works with
+every GCP metric — it depends on that specific metric's `metricKind`
+(GAUGE/DELTA/CUMULATIVE) and `valueType` (INT64/DOUBLE/DISTRIBUTION/...).
+Guessing aligners by trial and error against the live API wastes time and
+API calls; check the actual descriptor first:
+
+```bash
+TOKEN=$(gcloud auth print-access-token)
+curl -s -H "Authorization: Bearer $TOKEN" \
+  "https://monitoring.googleapis.com/v3/projects/<PROJECT_ID>/metricDescriptors/<metric.type, literal slash not encoded>" \
+  | python3 -m json.tool
+```
+
+For `gkebackup.googleapis.com/backup_completion_times` specifically
+(`DELTA` + `DISTRIBUTION`): `ALIGN_COUNT` and `ALIGN_MEAN` are both
+rejected (those reducers are restricted to GAUGE/CUMULATIVE kinds for
+distribution-valued metrics); `ALIGN_PERCENTILE_99` works and produces a
+scalar `DOUBLE` — since every completion-time sample is a positive
+duration, a `> 0` threshold still trips correctly whenever any matching
+event (a failed backup, or presence-check via `condition_absent`) exists
+in the window. `condition_absent` blocks need their own `aggregations {}`
+too — it's not inherited from anywhere, and omitting it fails with
+`Request was missing field aggregation.perSeriesAligner`.
+
+### Perpetual no-op diff on `google_container_cluster.monitoring_config`
+
+`terraform plan` may keep showing `enable_components` changing even
+right after a clean `apply`, e.g. `DAEMONSET` moving position in the
+list. This is a known list-vs-set mismatch: GKE's API doesn't guarantee
+it returns this field in the same order it was sent, but Terraform's
+schema treats it as an ordered list, not a set. The set of components is
+identical either way — harmless, cosmetic, safe to ignore. An empty
+`master_authorized_networks_config {}` block appearing as "added" every
+plan is the same story.
+
+## 10. Before this serves real traffic
+
+The `release_readiness` Terraform output reports what's still
+unconfigured for production, computed directly from your variables — it
+is not just documentation, it's live feedback on the current
+`terraform.tfvars`:
+
+```
+terraform output release_readiness
+```
+
+Checklist, in the order this repo's variables expose them:
+
+- `notification_channels = []` → `alert_delivery_configured: false`.
+  Alerts fire into the Monitoring console but page no one. Supply real
+  channel resource names.
+- `binary_authorization_attestors = []` → `attestation_enforced: false`.
+  Binary Authorization runs audit-only (logs violations, blocks nothing)
+  until attestors are supplied.
+- `public_app = null` → `public_https_configured: false`,
+  `waf_enforced: false`. No public HTTPS endpoint or Cloud Armor
+  protection is configured until this is set.
+- `requires_load_test` / `requires_restore_drill` are always `true` —
+  the module is explicit that a load test and an actual Backup-for-GKE
+  restore drill are manual steps outside Terraform's scope, not
+  something `apply` can satisfy for you.
+- Bump `environment`, `machine_type`, and `max_nodes_per_zone` up from a
+  scaled-down test config once ready — see step 7 for the sizing
+  trade-off.

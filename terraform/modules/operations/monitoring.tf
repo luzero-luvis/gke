@@ -34,7 +34,7 @@ locals {
       filter    = "${local.backup_filter} AND metric.type = \"gkebackup.googleapis.com/backup_completion_times\" AND metric.labels.state = \"FAILED\""
       threshold = 0
       duration  = "0s"
-      aligner   = "ALIGN_COUNT"
+      aligner   = "ALIGN_PERCENTILE_99"
       runbook   = "Inspect the failed Backup for GKE job and agent health. Resolve the cause and create a fresh backup; verify volume and namespace coverage."
     }
   }
@@ -81,6 +81,10 @@ resource "google_monitoring_alert_policy" "backup_missing" {
     condition_absent {
       filter   = "${local.backup_filter} AND metric.type = \"gkebackup.googleapis.com/backup_completion_times\" AND metric.labels.state = \"SUCCEEDED\""
       duration = "43200s"
+      aggregations {
+        alignment_period   = "300s"
+        per_series_aligner = "ALIGN_PERCENTILE_99"
+      }
       trigger { count = 1 }
     }
   }

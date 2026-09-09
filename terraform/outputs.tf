@@ -13,9 +13,9 @@ output "ip_plan" {
   value = merge(module.network.ip_plan, {
     pod_cidr_per_node       = "/25"
     pod_range_node_capacity = 512
-    min_nodes               = 3
-    max_nodes               = var.max_nodes_per_zone * 3
-    surge_nodes             = 3
+    min_nodes               = length(var.zones)
+    max_nodes               = var.max_nodes_per_zone * length(var.zones)
+    surge_nodes             = length(var.zones)
   })
 }
 
@@ -26,7 +26,7 @@ output "workload_config" {
     region       = var.region
     cluster_name = module.gke_cluster.name
     repository   = "${var.region}-docker.pkg.dev/${var.project_id}/${module.security.repository_id}"
-    public_app   = module.https_gateway.workload_config
+    gateway      = module.https_gateway.workload_config
   }
 }
 
@@ -40,8 +40,8 @@ output "release_readiness" {
   value = {
     alert_delivery_configured = length(var.notification_channels) > 0
     attestation_enforced      = length(var.binary_authorization_attestors) > 0
-    public_https_configured   = var.public_app != null
-    waf_enforced              = var.public_app == null ? false : !var.public_app.waf_preview
+    public_https_configured   = length(var.public_apps) > 0
+    waf_enforced              = length(var.public_apps) > 0 && alltrue([for app in var.public_apps : !app.waf_preview])
     requires_restore_drill    = true
     requires_load_test        = true
   }

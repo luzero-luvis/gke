@@ -27,16 +27,6 @@ spec:
       httpHealthCheck: {portSpecification: USE_FIXED_PORT, port: 8080, requestPath: /readyz}
   targetRef: {group: "", kind: Service, name: app}
 ---
-apiVersion: networking.gke.io/v1
-kind: GCPGatewayPolicy
-metadata:
-  name: app
-  namespace: apps
-spec:
-  default:
-    sslPolicy: "${SSL_POLICY}"
-  targetRef: {group: gateway.networking.k8s.io, kind: Gateway, name: app}
----
 apiVersion: networking.k8s.io/v1
 kind: NetworkPolicy
 metadata:

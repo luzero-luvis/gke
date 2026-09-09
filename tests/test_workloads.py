@@ -19,14 +19,14 @@ class WorkloadTests(unittest.TestCase):
         temporary = tempfile.TemporaryDirectory()
         self.addCleanup(temporary.cleanup)
         destination = Path(temporary.name)
-        config = {"repository": REPOSITORY, "public_app": None}
+        config = {"repository": REPOSITORY, "gateway": None}
         if edge:
-            config["public_app"] = {
-                "hostname": "api.example.com", "address_name": "production-gke-https",
-                "certificate_map": "production-gke-https", "security_policy": "production-gke-armor",
+            config["gateway"] = {
+                "address_name": "production-gke-https", "certificate_map": "production-gke-https",
                 "ssl_policy": "production-gke-tls",
+                "apps": {"app": {"hostname": "api.example.com", "security_policy": "production-gke-armor"}},
             }
-        RENDER.render(config, IMAGE, destination, "readers@example.com")
+        RENDER.render(config, IMAGE, destination, reader_group="readers@example.com")
         resources = []
         for path in destination.iterdir():
             resources.extend(yaml.safe_load_all(path.read_text()))
@@ -86,6 +86,29 @@ class WorkloadTests(unittest.TestCase):
             with self.subTest(image=image), tempfile.TemporaryDirectory() as directory:
                 with self.assertRaises(ValueError):
                     RENDER.render({"repository": REPOSITORY}, image, directory)
+
+    def test_multi_app_shares_gateway_but_keeps_distinct_route(self):
+        config = {
+            "repository": REPOSITORY,
+            "gateway": {
+                "address_name": "production-gke-https", "certificate_map": "production-gke-https",
+                "ssl_policy": "production-gke-tls",
+                "apps": {
+                    "app": {"hostname": "api.example.com", "security_policy": "production-gke-armor"},
+                    "docs": {"hostname": "docs.example.com", "security_policy": "production-gke-docs-armor"},
+                },
+            },
+        }
+        with tempfile.TemporaryDirectory() as directory:
+            RENDER.render(config, IMAGE, directory, app="docs")
+            resources = {}
+            for path in Path(directory).iterdir():
+                for r in yaml.safe_load_all(path.read_text()):
+                    resources[(r["kind"], r["metadata"]["name"])] = r
+        # Gateway itself carries no per-app hostname; only the route does.
+        self.assertNotIn("hostname", resources["Gateway", "app"]["spec"]["listeners"][0])
+        self.assertEqual(resources["HTTPRoute", "app"]["spec"]["hostnames"], ["docs.example.com"])
+        self.assertEqual(resources["GCPBackendPolicy", "app"]["spec"]["default"]["securityPolicy"], "production-gke-docs-armor")
 
     def test_reject_reuse_to_prevent_stale_public_routes(self):
         directory, _ = self.render(edge=True)

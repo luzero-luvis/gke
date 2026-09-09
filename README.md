@@ -166,4 +166,4 @@ The pinned [v45.0.0 module release](https://github.com/terraform-google-modules/
 
 The GitHub Actions workflow runs these checks with read-only repository permissions and no cloud credentials. Actions are pinned by commit. Production deployment should use a separate, protected pipeline with short-lived federation credentials and a reviewed saved plan.
 
-See the [architecture and guidance mapping](docs/architecture.md) for assumptions, costs and organization-level decisions.
+See the [architecture and guidance mapping](docs/architecture.md) for assumptions, costs and organization-level decisions. For `gcloud`/Terraform auth setup and a least-privilege IAM role list, see [GCP CLI & Terraform authentication setup](docs/gcp-auth-setup.md). For what's actually deployed in the running test environment, how it was built, and the current live architecture diagram, see the [deployment log](docs/deployment-log.md).

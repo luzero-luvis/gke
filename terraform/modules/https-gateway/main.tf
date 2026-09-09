@@ -1,24 +1,43 @@
 locals {
-  public_apps = var.public_app == null ? {} : { app = var.public_app }
+  # One shared IP/SSL policy/cert map regardless of how many apps share the Gateway.
+  shared = length(var.public_apps) > 0 ? { app = true } : {}
+  # Preserve the original unsuffixed names for the "app" key so an existing
+  # single-app deployment doesn't force-replace its already-issued
+  # certificate/policy when this module gains multi-app support. New app
+  # keys get suffixed names to stay unique alongside it.
+  https_name = { for k, v in var.public_apps : k => k == "app" ? "${var.cluster_name}-https" : "${var.cluster_name}-${k}-https" }
+  armor_name = { for k, v in var.public_apps : k => k == "app" ? "${var.cluster_name}-armor" : "${var.cluster_name}-${k}-armor" }
 }
 
 resource "google_compute_global_address" "app" {
-  for_each = local.public_apps
+  for_each = local.shared
+  name     = "${var.cluster_name}-https"
+}
+
+resource "google_compute_ssl_policy" "app" {
+  for_each        = local.shared
+  name            = "${var.cluster_name}-tls"
+  min_tls_version = "TLS_1_2"
+  profile         = "MODERN"
+}
+
+resource "google_certificate_manager_certificate_map" "app" {
+  for_each = local.shared
   name     = "${var.cluster_name}-https"
 }
 
 data "google_dns_managed_zone" "public" {
-  for_each = local.public_apps
+  for_each = var.public_apps
   name     = each.value.dns_managed_zone
 }
 
 resource "google_dns_record_set" "app" {
-  for_each     = local.public_apps
+  for_each     = var.public_apps
   managed_zone = data.google_dns_managed_zone.public[each.key].name
   name         = "${each.value.hostname}."
   type         = "A"
   ttl          = 300
-  rrdatas      = [google_compute_global_address.app[each.key].address]
+  rrdatas      = [google_compute_global_address.app["app"].address]
   lifecycle {
     precondition {
       condition = data.google_dns_managed_zone.public[each.key].visibility == "public" && (
@@ -31,14 +50,14 @@ resource "google_dns_record_set" "app" {
 }
 
 resource "google_certificate_manager_dns_authorization" "app" {
-  for_each = local.public_apps
-  name     = "${var.cluster_name}-https"
+  for_each = var.public_apps
+  name     = local.https_name[each.key]
   domain   = each.value.hostname
   type     = "PER_PROJECT_RECORD"
 }
 
 resource "google_dns_record_set" "certificate" {
-  for_each     = local.public_apps
+  for_each     = var.public_apps
   managed_zone = data.google_dns_managed_zone.public[each.key].name
   name         = google_certificate_manager_dns_authorization.app[each.key].dns_resource_record[0].name
   type         = google_certificate_manager_dns_authorization.app[each.key].dns_resource_record[0].type
@@ -47,8 +66,8 @@ resource "google_dns_record_set" "certificate" {
 }
 
 resource "google_certificate_manager_certificate" "app" {
-  for_each = local.public_apps
-  name     = "${var.cluster_name}-https"
+  for_each = var.public_apps
+  name     = local.https_name[each.key]
   managed {
     domains            = [each.value.hostname]
     dns_authorizations = [google_certificate_manager_dns_authorization.app[each.key].id]
@@ -56,29 +75,17 @@ resource "google_certificate_manager_certificate" "app" {
   depends_on = [google_dns_record_set.certificate]
 }
 
-resource "google_certificate_manager_certificate_map" "app" {
-  for_each = local.public_apps
-  name     = "${var.cluster_name}-https"
-}
-
 resource "google_certificate_manager_certificate_map_entry" "app" {
-  for_each     = local.public_apps
-  name         = "${var.cluster_name}-https"
-  map          = google_certificate_manager_certificate_map.app[each.key].name
+  for_each     = var.public_apps
+  name         = local.https_name[each.key]
+  map          = google_certificate_manager_certificate_map.app["app"].name
   hostname     = each.value.hostname
   certificates = [google_certificate_manager_certificate.app[each.key].id]
 }
 
-resource "google_compute_ssl_policy" "app" {
-  for_each        = local.public_apps
-  name            = "${var.cluster_name}-tls"
-  min_tls_version = "TLS_1_2"
-  profile         = "MODERN"
-}
-
 resource "google_compute_security_policy" "app" {
-  for_each = local.public_apps
-  name     = "${var.cluster_name}-armor"
+  for_each = var.public_apps
+  name     = local.armor_name[each.key]
   type     = "CLOUD_ARMOR"
 
   rule {

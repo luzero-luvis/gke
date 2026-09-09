@@ -10,7 +10,7 @@ import sys
 ROOT = Path(__file__).resolve().parents[1]
 
 
-def render(config, image, output, reader_group=None):
+def render(config, image, output, app=None, reader_group=None):
     repository = config["repository"]
     if not re.fullmatch(re.escape(repository) + r"/[a-z0-9][a-z0-9/._-]*@sha256:[a-f0-9]{64}", image):
         raise ValueError("Image must be in the Terraform-created repository and pinned with @sha256:<64 lowercase hex characters>.")
@@ -23,11 +23,21 @@ def render(config, image, output, reader_group=None):
         raise ValueError("Output directory must be empty; choose a new release directory.")
     values = {"APP_IMAGE": image}
     files = ["foundation.yaml", "application.yaml"]
-    edge = config.get("public_app")
-    if edge:
-        for key in ["hostname", "address_name", "certificate_map", "security_policy", "ssl_policy"]:
-            values[key.upper()] = edge[key]
-        files += ["edge-policy.yaml", "edge-routing.yaml"]
+    gateway = config.get("gateway")
+    if gateway:
+        app_key = app or "app"
+        if app_key not in gateway["apps"]:
+            raise ValueError(f"App '{app_key}' not found in gateway.apps; choices: {sorted(gateway['apps'])}")
+        app_entry = gateway["apps"][app_key]
+        values["ADDRESS_NAME"] = gateway["address_name"]
+        values["CERTIFICATE_MAP"] = gateway["certificate_map"]
+        values["SSL_POLICY"] = gateway["ssl_policy"]
+        values["HOSTNAME"] = app_entry["hostname"]
+        values["SECURITY_POLICY"] = app_entry["security_policy"]
+        # gateway.yaml is shared across every app; reapplying it is idempotent.
+        files += ["gateway.yaml", "edge-policy.yaml", "edge-routing.yaml"]
+    elif app:
+        raise ValueError("--app was given but no public_apps are configured in Terraform.")
     rendered = {}
     for name in files:
         content = (ROOT / "workloads" / "templates" / name).read_text()
@@ -56,10 +66,11 @@ def main():
     parser.add_argument("--config", required=True, type=Path, help="terraform output -json workload_config")
     parser.add_argument("--image", required=True, help="Artifact Registry image pinned by digest")
     parser.add_argument("--output", required=True, type=Path, help="Empty destination directory")
+    parser.add_argument("--app", help="Key in gateway.apps to render edge routing for (default: 'app')")
     parser.add_argument("--reader-group", help="Optional read-only Google Group RoleBinding")
     args = parser.parse_args()
     try:
-        files = render(json.loads(args.config.read_text()), args.image, args.output, args.reader_group)
+        files = render(json.loads(args.config.read_text()), args.image, args.output, args.app, args.reader_group)
     except (OSError, ValueError, KeyError, TypeError) as error:
         parser.exit(1, f"Render failed: {error}\n")
     print(f"Rendered {len(files)} files in {args.output}. Review and deploy in the order documented in README.md.")

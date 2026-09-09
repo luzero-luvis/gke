@@ -62,7 +62,7 @@ module "workload_identity" {
 module "https_gateway" {
   source       = "./modules/https-gateway"
   cluster_name = var.cluster_name
-  public_app   = var.public_app
+  public_apps  = var.public_apps
   depends_on   = [google_project_service.required]
 }
 

@@ -13,11 +13,11 @@ variable "region" {
 }
 
 variable "zones" {
-  description = "Exactly three distinct zones in the selected region."
+  description = "At least two distinct zones in the selected region."
   type        = list(string)
   validation {
-    condition     = length(distinct(var.zones)) == 3 && length(var.zones) == 3 && alltrue([for z in var.zones : startswith(z, "${var.region}-")])
-    error_message = "Choose three distinct zones within region."
+    condition     = length(distinct(var.zones)) == length(var.zones) && length(var.zones) >= 2 && alltrue([for z in var.zones : startswith(z, "${var.region}-")])
+    error_message = "Choose at least two distinct zones within region."
   }
 }
 
@@ -147,21 +147,21 @@ variable "backup_namespaces" {
   }
 }
 
-variable "public_app" {
-  description = "Optional public HTTPS endpoint. Supply an owned hostname and an existing public Cloud DNS zone in this project. Workload Gateway must be applied separately."
-  type = object({
+variable "public_apps" {
+  description = "Public HTTPS endpoints, keyed by short app name, sharing one static IP/cert map/SSL policy/Gateway. Each entry needs an owned hostname and an existing public Cloud DNS zone in this project. Workload Gateway and one HTTPRoute per app must be applied separately."
+  type = map(object({
     hostname                   = string
     dns_managed_zone           = string
     waf_preview                = optional(bool, true)
     requests_per_minute_per_ip = optional(number, 600)
-  })
-  default = null
+  }))
+  default = {}
   validation {
-    condition = var.public_app == null ? true : (
-      can(regex("^[a-z0-9]([a-z0-9.-]*[a-z0-9])?\\.[a-z]{2,}$", var.public_app.hostname)) &&
-      var.public_app.requests_per_minute_per_ip >= 10 && floor(var.public_app.requests_per_minute_per_ip) == var.public_app.requests_per_minute_per_ip
-    )
-    error_message = "Supply a lowercase hostname without a trailing dot and an integer rate limit of at least 10."
+    condition = alltrue([for app in var.public_apps :
+      can(regex("^[a-z0-9]([a-z0-9.-]*[a-z0-9])?\\.[a-z]{2,}$", app.hostname)) &&
+      app.requests_per_minute_per_ip >= 10 && floor(app.requests_per_minute_per_ip) == app.requests_per_minute_per_ip
+    ])
+    error_message = "Supply a lowercase hostname without a trailing dot and an integer rate limit of at least 10 for every app."
   }
 }
 

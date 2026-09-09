@@ -14,11 +14,11 @@ variable "region" {
 }
 
 variable "zones" {
-  description = "Exactly three distinct zones in the selected region."
+  description = "At least two distinct zones in the selected region."
   type        = list(string)
   validation {
-    condition     = length(distinct(var.zones)) == 3 && length(var.zones) == 3 && alltrue([for z in var.zones : startswith(z, "${var.region}-")])
-    error_message = "Choose three distinct zones within region."
+    condition     = length(distinct(var.zones)) == length(var.zones) && length(var.zones) >= 2 && alltrue([for z in var.zones : startswith(z, "${var.region}-")])
+    error_message = "Choose at least two distinct zones within region."
   }
 }
 
