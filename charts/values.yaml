@@ -42,8 +42,72 @@ image:
 
 # Deployment Configuration
 
-# -- Number of replicas
+# -- Number of replicas. Ignored (Deployment.spec.replicas is omitted
+# entirely) when autoscaling.enabled — see that section below.
 replicaCount: 1
+
+# Horizontal Pod Autoscaling
+#
+# Requires metrics-server on the cluster (standard on GKE/EKS/AKS). CPU/
+# memory targets are computed against resources.requests, not limits — set
+# requests accordingly before enabling this. When enabled, the Deployment
+# omits spec.replicas entirely so the HPA is the sole owner of replica
+# count; setting both means every `helm upgrade` fights the autoscaler back
+# to replicaCount.
+autoscaling:
+  # -- Create a HorizontalPodAutoscaler for this service
+  enabled: false
+
+  # -- Minimum replica count. 2+ recommended for any service in the
+  # request path — 1 means a scale-up event or node drain can leave zero
+  # capacity for the seconds it takes a new pod to become Ready.
+  minReplicas: 2
+
+  # -- Maximum replica count. Set with real headroom in mind (node/quota
+  # capacity) — a runaway scale-up from a metrics blip should hit a wall,
+  # not the cluster's ceiling.
+  maxReplicas: 10
+
+  # -- Target average CPU utilization, as a % of requested CPU. The
+  # standard starting point industry-wide; tune down for latency-sensitive
+  # services that need to scale before CPU saturates. Empty string disables
+  # this metric.
+  targetCPUUtilizationPercentage: 70
+
+  # -- Target average memory utilization, as a % of requested memory. Off
+  # by default — memory usage doesn't reliably drop after scale-down the
+  # way CPU does, so a memory target can under-react or thrash. Enable only
+  # for services that are genuinely memory-bound rather than CPU-bound.
+  # Empty string disables this metric.
+  targetMemoryUtilizationPercentage: ""
+
+  # -- Additional autoscaling/v2 MetricSpec entries, appended as-is (e.g. a
+  # Pub/Sub queue-depth or requests-per-second target via a metrics
+  # adapter/KEDA). Rendered verbatim under `spec.metrics`.
+  customMetrics: []
+
+  # Scaling behavior (autoscaling/v2). These defaults diverge from the
+  # Kubernetes upstream default (5m stabilization on both directions) in
+  # one place: scale-up reacts immediately (0s stabilization) since a
+  # traffic spike should get capacity fast, while scale-down keeps a 5m
+  # window so a brief dip mid-spike doesn't yo-yo replicas back down.
+  behavior:
+    scaleDown:
+      stabilizationWindowSeconds: 300
+      policies:
+        - type: Pods
+          value: 1
+          periodSeconds: 60
+    scaleUp:
+      stabilizationWindowSeconds: 0
+      policies:
+        - type: Percent
+          value: 100
+          periodSeconds: 15
+        - type: Pods
+          value: 4
+          periodSeconds: 15
+      selectPolicy: Max
 
 # -- Deployment update strategy
 strategy:
@@ -102,7 +166,9 @@ service:
 # at the platform/Terraform level — this chart never creates a Gateway).
 # Multiple services can share the same Gateway/static IP/cert map; each gets
 # its own hostname-matched HTTPRoute here. Only services that need a public
-# endpoint should set httpRoute.enabled: true.
+# endpoint should set httpRoute.enabled: true. For clusters running
+# ingress-nginx instead of the Gateway API, use `ingress` below instead —
+# both can be enabled at once (e.g. while migrating between the two).
 httpRoute:
   # -- Create an HTTPRoute for this service
   enabled: false
@@ -153,6 +219,46 @@ httpRoute:
     timeoutSec: 5
     healthyThreshold: 2
     unhealthyThreshold: 3
+
+# nginx Ingress Configuration
+#
+# Alternative to httpRoute for clusters running ingress-nginx instead of the
+# Gateway API. Independent of httpRoute and targets the same Service — only
+# services that need a public endpoint should set ingress.enabled: true.
+ingress:
+  # -- Create an Ingress for this service
+  enabled: false
+
+  # -- IngressClass name. Leave empty to use the cluster's default IngressClass.
+  className: nginx
+
+  # -- Public hostname this service answers on. Required when enabled.
+  hostname: ""
+
+  # -- Path matches for the route. One service can answer on several path
+  # prefixes on the same hostname.
+  paths:
+    - path: /
+      pathType: Prefix
+
+  # -- Ingress annotations, e.g. nginx.ingress.kubernetes.io/* rewrite and
+  # proxy tuning.
+  annotations: {}
+
+  # TLS termination at the ingress controller.
+  tls:
+    # -- Enable TLS on this Ingress
+    enabled: false
+    # -- Name of the Secret holding the TLS cert/key. Required when
+    # tls.enabled. This chart never creates the Secret itself — either
+    # cert-manager provisions it (set `clusterIssuer` below) or it already
+    # exists (created manually or synced from elsewhere).
+    secretName: ""
+    # -- Name of a cert-manager ClusterIssuer (e.g. letsencrypt-prod). Adds
+    # the cert-manager.io/cluster-issuer annotation so cert-manager watches
+    # this Ingress and auto-provisions/renews `secretName`. Leave empty to
+    # manage the Secret some other way.
+    clusterIssuer: ""
 
 # Secret Manager sync (Secrets Store CSI Driver)
 #

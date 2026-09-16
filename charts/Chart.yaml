@@ -4,3 +4,7 @@ description: Mumbai transit trip planner — OTP routing, JWT gateway, Flask API
 type: application
 version: 0.1.0
 appVersion: "0.1.0"
+maintainers:
+  - name: luzero-luvis
+    email: jostonluvis@gamil.com
+    url: https://github.com/luzero-luvis

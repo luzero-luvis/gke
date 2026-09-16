@@ -1,4 +1,4 @@
-# backend — Flask API. Public at gke.luzero.online/api (its own routes are
+# backend — Flask API. Public at mts.iudx.io/api (its own routes are
 # already prefixed /api/*, so no path rewrite needed).
 image:
   name: asia-south1-docker.pkg.dev/spartan-calling-484711-e5/test-gke-apps/backend@sha256:ed0eee759df88ef7e814f9694ba9919c7973e387039ac8a2b714ca9c3ba2705c
@@ -22,21 +22,14 @@ serviceAccountName: backend
 # placeholder "changeme"), gateway's signature check fails with 401 and
 # /api/health permanently reports "otp": "down" even though otp/gateway
 # are both actually fine.
-secretProviderClass:
+#
+# Plain Kubernetes Secret, created once per namespace ahead of install:
+#   kubectl -n <ns> create secret generic backend-secrets \
+#     --from-literal=OTP_PLANNER_SECRET="$(openssl rand -hex 32)"
+# Must match gateway-secrets' OTP_PLANNER_SECRET exactly.
+envFromSecret:
   enabled: true
-  projectNumber: "946971495041"
   secretName: backend-secrets
-  secrets:
-    - key: OTP_PLANNER_SECRET
-      secretId: mts-ijp-otp-planner-secret
-
-# This cluster's Secret Manager CSI add-on doesn't run the sync-to-Secret
-# controller, only the CSI mount itself — read the mounted file directly.
-command: ["sh", "-c"]
-args:
-  - |
-    export OTP_PLANNER_SECRET="$(cat /mnt/secrets-store/OTP_PLANNER_SECRET)"
-    exec python app.py
 
 readinessProbe:
   type: httpGet
@@ -51,10 +44,22 @@ livenessProbe:
 
 httpRoute:
   enabled: true
-  hostname: gke.luzero.online
+  hostname: mts.iudx.io
   healthCheck:
     enabled: true
     path: /api/health
   paths:
     - type: PathPrefix
       value: /api
+
+ingress:
+  enabled: true
+  hostname: mts.iudx.io
+  paths:
+    - path: /api
+      pathType: Prefix
+  # Same cert as the other services on this host — provisioned by frontend's
+  # Ingress (see its clusterIssuer comment). No clusterIssuer set here.
+  tls:
+    enabled: true
+    secretName: mts-iudx-io-tls

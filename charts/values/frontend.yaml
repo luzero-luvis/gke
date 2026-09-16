@@ -1,5 +1,5 @@
 # frontend — React SPA served by a small Node server (serve.cjs), not
-# nginx despite the docker-compose comment. Public at gke.luzero.online/
+# nginx despite the docker-compose comment. Public at mts.iudx.io/
 # (catch-all — lowest route precedence, everything more specific above
 # wins). Its own server also internally proxies /api and /webhook, but
 # those are served directly by backend/wa-bot's own routes here instead.
@@ -16,7 +16,23 @@ env:
 
 httpRoute:
   enabled: true
-  hostname: gke.luzero.online
+  hostname: mts.iudx.io
   paths:
     - type: PathPrefix
       value: /
+
+ingress:
+  enabled: true
+  hostname: mts.iudx.io
+  paths:
+    - path: /
+      pathType: Prefix
+  # This is the one service whose Ingress owns the cert-manager Certificate
+  # for mts.iudx.io — the other 4 services' Ingress objects reference the
+  # same tls.secretName without a clusterIssuer, so cert-manager doesn't try
+  # to also manage it (it only lets one Certificate own a given Secret;
+  # annotating all 5 would make them fight over ownership).
+  tls:
+    enabled: true
+    secretName: mts-iudx-io-tls
+    clusterIssuer: letsencrypt-prod

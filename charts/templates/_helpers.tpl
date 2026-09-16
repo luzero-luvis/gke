@@ -144,3 +144,14 @@ policy/v1
 policy/v1beta1
 {{- end -}}
 {{- end -}}
+
+{{/*
+Return the appropriate apiVersion for HorizontalPodAutoscaler.
+*/}}
+{{- define "mts-ijp.hpa.apiVersion" -}}
+{{- if .Capabilities.APIVersions.Has "autoscaling/v2" -}}
+autoscaling/v2
+{{- else -}}
+autoscaling/v2beta2
+{{- end -}}
+{{- end -}}

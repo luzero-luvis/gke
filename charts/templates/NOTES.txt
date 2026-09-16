@@ -5,7 +5,11 @@
 Service:    {{ include "mts-ijp.fullname" . }}
 Namespace:  {{ include "mts-ijp.namespace" . }}
 Image:      {{ .Values.image.name }}
+{{- if .Values.autoscaling.enabled }}
+Replicas:   {{ .Values.autoscaling.minReplicas }}-{{ .Values.autoscaling.maxReplicas }} (HPA-managed)
+{{- else }}
 Replicas:   {{ .Values.replicaCount }}
+{{- end }}
 
 {{- if .Values.service.enabled }}
 
@@ -33,6 +37,16 @@ DISRUPTION BUDGET:
   {{- if .Values.podDisruptionBudget.maxUnavailable }}
   maxUnavailable: {{ .Values.podDisruptionBudget.maxUnavailable }}
   {{- end }}
+{{- end }}
+
+{{- if .Values.autoscaling.enabled }}
+
+AUTOSCALING:
+  {{ .Values.autoscaling.minReplicas }}-{{ .Values.autoscaling.maxReplicas }} replicas
+  {{- if .Values.autoscaling.targetCPUUtilizationPercentage }}, target CPU {{ .Values.autoscaling.targetCPUUtilizationPercentage }}%{{- end }}
+  {{- if .Values.autoscaling.targetMemoryUtilizationPercentage }}, target memory {{ .Values.autoscaling.targetMemoryUtilizationPercentage }}%{{- end }}
+
+  kubectl -n {{ include "mts-ijp.namespace" . }} get hpa {{ include "mts-ijp.fullname" . }}
 {{- end }}
 
 USEFUL COMMANDS:

@@ -1,5 +1,5 @@
 # mobility-api — client-facing FastAPI service. Public at
-# gke.luzero.online/api/v1 (more specific than backend's /api, so Gateway
+# mts.iudx.io/api/v1 (more specific than backend's /api, so Gateway
 # API routes /api/v1/* here and everything else under /api/* to backend).
 image:
   name: asia-south1-docker.pkg.dev/spartan-calling-484711-e5/test-gke-apps/mobility-api@sha256:2be0d1d28caf3aeed6cb4640f94cef408ef6999819fa8b4cf4d5345cac9cc675
@@ -12,23 +12,22 @@ env:
 
 serviceAccountName: mobility-api
 
-secretProviderClass:
-  enabled: true
-  projectNumber: "946971495041"
-  secretName: mobility-api-secrets
-  secrets:
-    - key: ADAPTER_NOTIFY_SECRET
-      secretId: mts-ijp-adapter-notify-secret
+# readOnlyRootFilesystem leaves uv no writable cache dir except the chart's
+# own "tmp" emptyDir.
+env:
+  - name: ONDC_ADAPTER_URL
+    value: http://ondc-adapter
+  - name: UV_CACHE_DIR
+    value: /tmp/uv-cache
 
-# This cluster's Secret Manager CSI add-on doesn't run the sync-to-Secret
-# controller, only the CSI mount itself — envFromSecret against a synced
-# Secret never materializes. Read the mounted file directly instead.
-command: ["sh", "-c"]
-args:
-  - |
-    export ADAPTER_NOTIFY_SECRET="$(cat /mnt/secrets-store/ADAPTER_NOTIFY_SECRET)"
-    export UV_CACHE_DIR=/tmp/uv-cache
-    exec uv run uvicorn app.main:app --host 0.0.0.0 --port 8000
+# Plain Kubernetes Secret, created once per namespace ahead of install:
+#   kubectl -n <ns> create secret generic mobility-api-secrets \
+#     --from-literal=ADAPTER_NOTIFY_SECRET="$(openssl rand -hex 32)"
+# Must match ondc-adapter-secrets' MOBILITY_API_NOTIFY_SECRET exactly —
+# same value, different env var name on each side of that callback.
+envFromSecret:
+  enabled: true
+  secretName: mobility-api-secrets
 
 readinessProbe:
   type: httpGet
@@ -43,7 +42,7 @@ livenessProbe:
 
 httpRoute:
   enabled: true
-  hostname: gke.luzero.online
+  hostname: mts.iudx.io
   # Without this, GKE's Gateway defaults the GCP-level backend health check
   # to "/", which 404s and marks the backend UNHEALTHY at the LB even
   # though the pod itself is fine — point it at the real health path.
@@ -58,3 +57,17 @@ httpRoute:
       value: /api/v1
     - type: PathPrefix
       value: /mobility/v1
+
+ingress:
+  enabled: true
+  hostname: mts.iudx.io
+  paths:
+    - path: /api/v1
+      pathType: Prefix
+    - path: /mobility/v1
+      pathType: Prefix
+  # Same cert as the other services on this host — provisioned by frontend's
+  # Ingress (see its clusterIssuer comment). No clusterIssuer set here.
+  tls:
+    enabled: true
+    secretName: mts-iudx-io-tls

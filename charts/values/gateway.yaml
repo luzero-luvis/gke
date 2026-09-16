@@ -12,19 +12,11 @@ env:
 
 serviceAccountName: gateway
 
-secretProviderClass:
+# Plain Kubernetes Secret, created once per namespace ahead of install:
+#   kubectl -n <ns> create secret generic gateway-secrets \
+#     --from-literal=OTP_PLANNER_SECRET="$(openssl rand -hex 32)"
+# Must be the same value used for backend-secrets' OTP_PLANNER_SECRET —
+# gateway verifies the JWT backend signs with it.
+envFromSecret:
   enabled: true
-  projectNumber: "946971495041"
   secretName: gateway-secrets
-  secrets:
-    - key: OTP_PLANNER_SECRET
-      secretId: mts-ijp-otp-planner-secret
-
-# This cluster's Secret Manager CSI add-on doesn't run the sync-to-Secret
-# controller, only the CSI mount itself — envFromSecret against a synced
-# Secret never materializes. Read the mounted file directly instead.
-command: ["sh", "-c"]
-args:
-  - |
-    export OTP_PLANNER_SECRET="$(cat /mnt/secrets-store/OTP_PLANNER_SECRET)"
-    exec python gateway.py

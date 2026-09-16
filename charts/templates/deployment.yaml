@@ -10,7 +10,12 @@ metadata:
     {{- toYaml . | nindent 4 }}
   {{- end }}
 spec:
+  {{- /* Omitted entirely when the HPA owns replica count — setting both
+         means every `helm upgrade` resets it back to replicaCount, fighting
+         the autoscaler. */}}
+  {{- if not .Values.autoscaling.enabled }}
   replicas: {{ .Values.replicaCount }}
+  {{- end }}
   selector:
     matchLabels:
       {{- include "mts-ijp.selectorLabels" . | nindent 6 }}

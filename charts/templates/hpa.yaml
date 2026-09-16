@@ -1,0 +1,46 @@
+{{- if .Values.autoscaling.enabled }}
+{{- if and .Values.autoscaling.targetCPUUtilizationPercentage (not (dig "requests" "cpu" "" .Values.resources)) }}
+{{- fail "resources.requests.cpu is required when autoscaling.targetCPUUtilizationPercentage is set — HPA computes utilization against requests, not limits" }}
+{{- end }}
+{{- if and .Values.autoscaling.targetMemoryUtilizationPercentage (not (dig "requests" "memory" "" .Values.resources)) }}
+{{- fail "resources.requests.memory is required when autoscaling.targetMemoryUtilizationPercentage is set — HPA computes utilization against requests, not limits" }}
+{{- end }}
+apiVersion: {{ include "mts-ijp.hpa.apiVersion" . }}
+kind: HorizontalPodAutoscaler
+metadata:
+  name: {{ include "mts-ijp.fullname" . }}
+  namespace: {{ include "mts-ijp.namespace" . }}
+  labels:
+    {{- include "mts-ijp.labels" . | nindent 4 }}
+spec:
+  scaleTargetRef:
+    apiVersion: apps/v1
+    kind: Deployment
+    name: {{ include "mts-ijp.fullname" . }}
+  minReplicas: {{ .Values.autoscaling.minReplicas }}
+  maxReplicas: {{ .Values.autoscaling.maxReplicas }}
+  metrics:
+    {{- if .Values.autoscaling.targetCPUUtilizationPercentage }}
+    - type: Resource
+      resource:
+        name: cpu
+        target:
+          type: Utilization
+          averageUtilization: {{ .Values.autoscaling.targetCPUUtilizationPercentage }}
+    {{- end }}
+    {{- if .Values.autoscaling.targetMemoryUtilizationPercentage }}
+    - type: Resource
+      resource:
+        name: memory
+        target:
+          type: Utilization
+          averageUtilization: {{ .Values.autoscaling.targetMemoryUtilizationPercentage }}
+    {{- end }}
+    {{- with .Values.autoscaling.customMetrics }}
+    {{- toYaml . | nindent 4 }}
+    {{- end }}
+  {{- with .Values.autoscaling.behavior }}
+  behavior:
+    {{- toYaml . | nindent 4 }}
+  {{- end }}
+{{- end }}
